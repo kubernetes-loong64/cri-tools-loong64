@@ -46,18 +46,15 @@ jobs:
           fi
           echo "IS_STABLE=$IS_STABLE"
           echo "IS_STABLE=$IS_STABLE" >> ${GITHUB_OUTPUT}
-      - name: Clone cri-tools
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: kubernetes-sigs/cri-tools
-          ref: ${{ env.CRI_TOOLS_BRANCH }}
-          path: cri-tools
-      - name: ls
-        run: ls -lah
       - name: Install build tools
         run: |
           apt update
           apt install -y git make golang file
+      - name: Clone cri-tools
+        run: |
+          git clone --branch ${{ env.CRI_TOOLS_BRANCH }} --depth 1 https://github.com/kubernetes-sigs/cri-tools.git cri-tools
+      - name: ls
+        run: ls -lah
       #- name: Apply patches
       #  working-directory: cri-tools
       #  run: git apply ../*.patch
