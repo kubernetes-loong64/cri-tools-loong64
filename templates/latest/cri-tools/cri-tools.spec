@@ -1,5 +1,10 @@
 %global debug_package %{nil}
 %undefine _missing_build_ids_terminate_build
+%global __strip /bin/true
+
+# Disable strip and build-id links for cross-compiled loongarch64 binary
+#%global _build_id_links none
+#%define __strip /bin/true
 
 Name: cri-tools
 #Version: {{ .RPMVersion }}
@@ -12,9 +17,11 @@ Summary: Command-line utility for interacting with a container runtime
 Group: admin
 %endif
 
-Packager: Kubernetes Authors <dev@kubernetes.io>
+#Packager: Kubernetes Authors <dev@kubernetes.io>
+Packager: 徐晓伟 <xuxiaowei@xuxiaowei.com.cn>
 License: Apache-2.0
-URL: https://kubernetes.io
+URL: https://github.com/kubernetes-loong64/cri-tools-loong64
+BugURL: https://github.com/kubernetes-loong64/cri-tools-loong64/issues
 # Source0: name_version.orig.tar.gz
 
 %description
