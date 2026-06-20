@@ -126,7 +126,7 @@ jobs:
           docker run --privileged --rm ghcr.io/loong64/binfmt --install all
       - name: Print cri-tools version
         run: |
-          cri-tools/build/bin/crictl -v
+          cri-tools/build/bin/linux/loong64/crictl -v
 
   rpm-anolis:
     needs: build
