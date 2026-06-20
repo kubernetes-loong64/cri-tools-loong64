@@ -13,6 +13,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: debian:13
+    outputs:
+      RAW_VERSION: ${{ steps.extract.outputs.RAW_VERSION }}
+      CRI_TOOLS_BRANCH: ${{ steps.extract.outputs.CRI_TOOLS_BRANCH }}
+      RELEASE: ${{ steps.extract.outputs.RELEASE }}
+      IS_STABLE: ${{ steps.extract.outputs.IS_STABLE }}
+      VERSION: ${{ steps.extract.outputs.VERSION }}
     permissions:
       contents: read
     steps:
@@ -36,9 +42,21 @@ jobs:
           echo "REF=$REF"
           RAW_VERSION=$(echo $REF | awk -F'loong64-' '{print $2}')
           echo "RAW_VERSION=$RAW_VERSION"
+          echo "RAW_VERSION=$RAW_VERSION" >> ${GITHUB_ENV}
+          echo "RAW_VERSION=$RAW_VERSION" >> ${GITHUB_OUTPUT}
           CRI_TOOLS_BRANCH=$(echo $RAW_VERSION | awk -F'+' '{print $1}')
           echo "CRI_TOOLS_BRANCH=$CRI_TOOLS_BRANCH"
           echo "CRI_TOOLS_BRANCH=$CRI_TOOLS_BRANCH" >> ${GITHUB_ENV}
+          echo "CRI_TOOLS_BRANCH=$CRI_TOOLS_BRANCH" >> ${GITHUB_OUTPUT}
+          VERSION=$(echo $CRI_TOOLS_BRANCH | awk -F'v' '{print $2}')
+          echo "VERSION=$VERSION"
+          echo "VERSION=$VERSION" >> ${GITHUB_ENV}
+          echo "VERSION=$VERSION" >> ${GITHUB_OUTPUT}
+          RELEASE=$(echo $RAW_VERSION | awk -F'+' '{print $2}')
+          RELEASE=${RELEASE:-alpha.${{ github.run_number }}}
+          echo "RELEASE=$RELEASE"
+          echo "RELEASE=$RELEASE" >> ${GITHUB_ENV}
+          echo "RELEASE=$RELEASE" >> ${GITHUB_OUTPUT}
           if echo "$RAW_VERSION" | grep -qE '[+].*(alpha|beta|rc)'; then
             IS_STABLE=false
           else
@@ -79,3 +97,196 @@ jobs:
           name: cri-tools-loong64-binaries
           path: |
             cri-tools/build/bin/*
+
+  rpm-anolis:
+    needs: build
+    runs-on: ubuntu-latest
+    container: openanolis/anolisos:23
+    outputs:
+      ANOLIS_RPM_NAME: ${{ steps.rpm-file.outputs.ANOLIS_RPM_NAME }}
+    permissions:
+      contents: read
+    env:
+      RAW_VERSION: ${{ needs.build.outputs.RAW_VERSION }}
+      CRI_TOOLS_BRANCH: ${{ needs.build.outputs.CRI_TOOLS_BRANCH }}
+      RELEASE: ${{ needs.build.outputs.RELEASE }}
+      ARCH: loongarch64
+      VERSION: ${{ needs.build.outputs.VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Extract version
+        id: extract-version
+        run: |
+          DIST=$(rpm --eval '%{dist}')
+          echo "DIST=$DIST"
+          echo "DIST=$DIST" >> ${GITHUB_ENV}
+          ANOLIS_VERSION=$(cat /etc/anolis-release | awk '{print $4}' | cut -d'.' -f1)
+          echo "ANOLIS_VERSION=$ANOLIS_VERSION"
+          echo "ANOLIS_VERSION=$ANOLIS_VERSION" >> ${GITHUB_ENV}
+      - name: Install build tools
+        run: yum install -y rpm-build rpmdevtools
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cri-tools-loong64-binaries
+          path: artifacts
+      - name: Build RPM
+        run: |
+          rm -rf ~/rpmbuild
+          rpmdev-setuptree
+          find ~/rpmbuild
+          CRICTL_BIN=$(find artifacts -name crictl -type f | head -1)
+          echo "CRICTL_BIN=$CRICTL_BIN"
+          cp "$CRICTL_BIN" ~/rpmbuild/BUILD/crictl
+          cp templates/latest/cri-tools/cri-tools.spec ~/rpmbuild/SPECS/
+          cp LICENSE ~/rpmbuild/BUILD/
+          cp templates/latest/cri-tools/README.md ~/rpmbuild/BUILD/
+          rpmbuild -ba --target ${{ env.ARCH }} ~/rpmbuild/SPECS/cri-tools.spec \
+            --define "version ${{ env.VERSION }}" \
+            --define "release ${{ env.RELEASE }}"
+          mkdir -p rpms
+          find ~/rpmbuild/RPMS -name '*.rpm'
+          find ~/rpmbuild/RPMS -name '*.rpm' -exec cp -t rpms {} +
+      - name: List RPM files
+        id: rpm-file
+        run: |
+          ANOLIS_RPM_NAME=cri-tools-${{ env.VERSION }}-${{ env.RELEASE }}${{ env.DIST }}.${{ env.ARCH }}.rpm
+          echo "ANOLIS_RPM_NAME=$ANOLIS_RPM_NAME"
+          echo "ANOLIS_RPM_NAME=$ANOLIS_RPM_NAME" >> $GITHUB_OUTPUT
+          echo "ANOLIS_RPM_NAME=$ANOLIS_RPM_NAME" >> $GITHUB_ENV
+          echo "=== RPM file name: $ANOLIS_RPM_NAME ==="
+          sha256sum rpms/$ANOLIS_RPM_NAME
+          echo "=== RPM info ==="
+          rpm -qpi rpms/$ANOLIS_RPM_NAME
+          echo "=== RPM contents ==="
+          rpm2cpio rpms/$ANOLIS_RPM_NAME | cpio -it
+      - name: Upload RPM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cri-tools-loong64-rpm
+          path: |
+            rpms/${{ env.ANOLIS_RPM_NAME }}
+      - name: Export system version
+        run: |
+          cat /etc/os-release > /tmp/rpm-anolis-os-release.txt
+          cat /tmp/rpm-anolis-os-release.txt
+      - name: Export installed packages
+        run: |
+          rpm -qa --queryformat '%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\n' | column -t -s $'\t' | sort -f > /tmp/rpm-anolis-installed-packages-rpm.txt
+          cat /tmp/rpm-anolis-installed-packages-rpm.txt
+      - name: Upload system info
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cri-tools-loong64-rpm-system-info
+          path: |
+            /tmp/rpm-anolis-installed-packages-rpm.txt
+            /tmp/rpm-anolis-os-release.txt
+
+  deb-debian:
+    needs: build
+    runs-on: ubuntu-latest
+    container: debian:13
+    outputs:
+      DEBIAN_DEB_NAME: ${{ steps.deb-file.outputs.DEBIAN_DEB_NAME }}
+    permissions:
+      contents: read
+    env:
+      RAW_VERSION: ${{ needs.build.outputs.RAW_VERSION }}
+      CRI_TOOLS_BRANCH: ${{ needs.build.outputs.CRI_TOOLS_BRANCH }}
+      RELEASE: ${{ needs.build.outputs.RELEASE }}
+      ARCH: loong64
+      VERSION: ${{ needs.build.outputs.VERSION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install build tools
+        run: |
+          apt update
+          apt install -y file
+      - name: Extract version
+        id: extract-version
+        run: |
+          ID_VERSION_ID=$(sh -c '. /etc/os-release && echo "${ID}.${VERSION_ID}"')
+          echo "ID_VERSION_ID=$ID_VERSION_ID"
+          echo "ID_VERSION_ID=$ID_VERSION_ID" >> ${GITHUB_ENV}
+          DEBIAN_VERSION_CODENAME=$(sh -c '. /etc/os-release && echo "${VERSION_CODENAME}"')
+          echo "DEBIAN_VERSION_CODENAME=$DEBIAN_VERSION_CODENAME"
+          echo "DEBIAN_VERSION_CODENAME=$DEBIAN_VERSION_CODENAME" >> ${GITHUB_ENV}
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cri-tools-loong64-binaries
+          path: artifacts
+      - name: Build DEB
+        run: |
+          PKG_ROOT=$(mktemp -d)
+          mkdir -p $PKG_ROOT/usr/bin
+          mkdir -p $PKG_ROOT/usr/share/doc/cri-tools
+          mkdir -p $PKG_ROOT/DEBIAN
+
+          CRICTL_BIN=$(find artifacts -name crictl -type f | head -1)
+          echo "CRICTL_BIN=$CRICTL_BIN"
+          install -m 755 "$CRICTL_BIN" $PKG_ROOT/usr/bin/crictl
+          install -m 644 LICENSE $PKG_ROOT/usr/share/doc/cri-tools/copyright
+          install -m 644 templates/latest/cri-tools/README.md $PKG_ROOT/usr/share/doc/cri-tools/README.md
+
+          cat > $PKG_ROOT/DEBIAN/control << EOF
+          Package: cri-tools
+          Version: ${{ env.VERSION }}-${{ env.RELEASE }}~${{ env.ID_VERSION_ID }}~${{ env.DEBIAN_VERSION_CODENAME }}
+          Architecture: ${{ env.ARCH }}
+          Maintainer: 徐晓伟 <xuxiaowei@xuxiaowei.com.cn>
+          Description: Command-line utility for interacting with a container runtime (loong64)
+           CLI and validation tools for Kubelet Container Runtime Interface (CRI),
+           built for the loong64 (LoongArch) architecture.
+          Homepage: https://github.com/kubernetes-sigs/cri-tools
+          Section: admin
+          Priority: optional
+          EOF
+
+          mkdir -p debs
+          dpkg-deb --build $PKG_ROOT debs/
+
+          find debs -name '*.deb'
+          # Rename: replace ~ with . in filename (GitHub releases / URLs don't like ~)
+          for f in debs/*.deb; do
+            new_name=$(echo "$f" | tr '~' '.')
+            if [ "$f" != "$new_name" ]; then
+              mv "$f" "$new_name"
+              echo "Renamed: $f -> $new_name"
+            fi
+          done
+      - name: List DEB files
+        id: deb-file
+        run: |
+          DEBIAN_DEB_NAME=cri-tools_${{ env.VERSION }}-${{ env.RELEASE }}.${{ env.ID_VERSION_ID }}.${{ env.DEBIAN_VERSION_CODENAME }}_${{ env.ARCH }}.deb
+          echo "DEBIAN_DEB_NAME=$DEBIAN_DEB_NAME"
+          echo "DEBIAN_DEB_NAME=$DEBIAN_DEB_NAME" >> $GITHUB_OUTPUT
+          echo "DEBIAN_DEB_NAME=$DEBIAN_DEB_NAME" >> $GITHUB_ENV
+          echo "=== DEB file name: $DEBIAN_DEB_NAME ==="
+          sha256sum debs/$DEBIAN_DEB_NAME
+          echo "=== DEB info ==="
+          dpkg --info debs/$DEBIAN_DEB_NAME
+          echo "=== DEB contents ==="
+          dpkg --contents debs/$DEBIAN_DEB_NAME
+      - name: Upload DEB
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cri-tools-loong64-deb
+          path: |
+            debs/${{ env.DEBIAN_DEB_NAME }}
+      - name: Export system version
+        run: |
+          cat /etc/os-release > /tmp/deb-debian-os-release.txt
+          cat /tmp/deb-debian-os-release.txt
+      - name: Export installed packages
+        run: |
+          dpkg -l > /tmp/deb-debian-installed-packages-packages.txt
+          cat /tmp/deb-debian-installed-packages-packages.txt
+      - name: Upload system info
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cri-tools-loong64-deb-system-info
+          path: |
+            /tmp/deb-debian-installed-packages-packages.txt
+            /tmp/deb-debian-os-release.txt

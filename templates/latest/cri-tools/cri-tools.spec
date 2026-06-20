@@ -2,8 +2,10 @@
 %undefine _missing_build_ids_terminate_build
 
 Name: cri-tools
-Version: {{ .RPMVersion }}
-Release: {{ .Revision }}
+#Version: {{ .RPMVersion }}
+#Release: {{ .Revision }}
+Version: %{?version}%{!?version:1}
+Release: %{?release}%{!?release:1}%{?dist}
 Summary: Command-line utility for interacting with a container runtime
 
 %if "%{_vendor}" == "debbuild"
@@ -13,24 +15,26 @@ Group: admin
 Packager: Kubernetes Authors <dev@kubernetes.io>
 License: Apache-2.0
 URL: https://kubernetes.io
-Source0: %{name}_%{version}.orig.tar.gz
+#Source0: %{name}_%{version}.orig.tar.gz
 
 %description
 %{summary}.
 
 %prep
-%setup -q -c
+#%setup -q -c
+# No source tarball — binaries are provided externally
 
 %build
 # Nothing to build
 
 %install
 # Detect host arch
-KUBE_ARCH="$(uname -m)"
+#KUBE_ARCH="$(uname -m)"
 
 # Install binaries
 mkdir -p %{buildroot}%{_bindir}
-install -p -m 755 ${KUBE_ARCH}/crictl %{buildroot}%{_bindir}/crictl
+#install -p -m 755 ${KUBE_ARCH}/crictl %{buildroot}%{_bindir}/crictl
+install -p -m 755 crictl %{buildroot}%{_bindir}/crictl
 
 %files
 %{_bindir}/crictl
