@@ -15,7 +15,7 @@ Group: admin
 Packager: Kubernetes Authors <dev@kubernetes.io>
 License: Apache-2.0
 URL: https://kubernetes.io
-#Source0: %{name}_%{version}.orig.tar.gz
+# Source0: name_version.orig.tar.gz
 
 %description
 %{summary}.
